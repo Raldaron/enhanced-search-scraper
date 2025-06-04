@@ -1,4 +1,5 @@
 from .engines import *
+from .results_analyzer import ResultsAnalyzer
 
 
 __title__ = 'search_engines'
@@ -16,5 +17,6 @@ __all__ = [
     'Ask', 
     'Mojeek', 
     'Qwant',
-    'Torch'
+    'Torch',
+    'ResultsAnalyzer'
 ]
