@@ -86,54 +86,100 @@ class ImprovedBingScraper:
         self.session.headers.clear()
         self.session.headers.update(headers)
 
+    def enhanced_request_handler(self, url, max_retries=3, backoff_factor=2):
+        """Make HTTP request with retry and backoff logic."""
+        wait_time = backoff_factor
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                # rotate user agent to look less like a bot
+                self.update_headers()
+                response = self.session.get(url, timeout=30)
+
+                if response.status_code == 429:
+                    print(f"Rate limited (429) when fetching {url} - retry {attempt}/{max_retries} after {wait_time}s")
+                    time.sleep(wait_time)
+                    wait_time *= backoff_factor
+                    continue
+
+                if 500 <= response.status_code < 600:
+                    print(f"Server error {response.status_code} for {url} - retry {attempt}/{max_retries} after {wait_time}s")
+                    time.sleep(wait_time)
+                    wait_time *= backoff_factor
+                    continue
+
+                if 'captcha' in response.text.lower():
+                    print("CAPTCHA detected. Stopping requests.")
+                    return None
+
+                response.raise_for_status()
+                return response
+
+            except requests.exceptions.Timeout:
+                print(f"Timeout on attempt {attempt} for {url} - retrying in {wait_time}s")
+                time.sleep(wait_time)
+                wait_time *= backoff_factor
+            except requests.exceptions.ConnectionError as e:
+                print(f"Connection error on attempt {attempt} for {url}: {e}")
+                self.session = requests.Session()
+                self.session.headers.update(self.session.headers)
+                time.sleep(wait_time)
+                wait_time *= backoff_factor
+            except requests.RequestException as e:
+                print(f"Request exception on attempt {attempt} for {url}: {e}")
+                time.sleep(wait_time)
+                wait_time *= backoff_factor
+
+        print(f"All retries failed for {url}")
+        return None
+
     def get_random_delay(self, min_delay=2, max_delay=5):
         """Generate random delay between requests with slight variance"""
         return random.uniform(min_delay, max_delay) + random.random() * 0.5
-        
+
     def search_bing(self, query, max_pages=10, delay_range=(2, 5)):
-        """Search Bing with proper pagination handling"""
+        """Search Bing with proper pagination handling and robust error handling"""
         print(f"Starting Bing search for: '{query}'")
-        
+
         base_url = "https://www.bing.com/search"
         encoded_query = quote_plus(query)
-        
+
         for page in range(max_pages):
             # Calculate the offset for this page (Bing uses 'first' parameter)
             offset = page * 10  # Bing shows 10 results per page by default
-            
+
             # Build URL with proper pagination
             if page == 0:
                 url = f"{base_url}?q={encoded_query}&FORM=QBRE"
             else:
                 url = f"{base_url}?q={encoded_query}&first={offset}&FORM=PERE"
-            
+
             print(f"\nPage {page + 1}: {url}")
-            
+
             try:
                 # Add some randomness to avoid detection
                 time.sleep(self.get_random_delay(*delay_range))
 
-                # Rotate headers for each request
-                self.update_headers()
+                # Make request using enhanced handler (with retries, header rotation, etc.)
+                response = self.enhanced_request_handler(url)
+                if not response:
+                    print("Failed to retrieve page after retries")
+                    break
 
-                # Make request
-                response = self.session.get(url, timeout=30)
-                response.raise_for_status()
-                
                 print(f"Response status: {response.status_code}")
                 print(f"Response size: {len(response.text)} chars")
-                
+
                 # Parse results
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
+
                 # Find search result items
                 result_items = soup.select('li.b_algo')
                 print(f"Found {len(result_items)} result items")
-                
+
                 if not result_items:
                     print("No more results found, ending search")
                     break
-                
+
                 page_results = []
                 for item in result_items:
                     result = self.extract_result(item, page + 1)
@@ -141,27 +187,27 @@ class ImprovedBingScraper:
                         self.unique_urls.add(result['url'])
                         page_results.append(result)
                         self.results.append(result)
-                
+
                 print(f"Extracted {len(page_results)} new unique results")
-                
+
                 # Check if we found any easyapply.co results
                 easyapply_results = [r for r in page_results if 'easyapply.co' in r['url']]
                 if easyapply_results:
                     print(f"Found {len(easyapply_results)} easyapply.co results on this page!")
                     for result in easyapply_results:
                         print(f"  - {result['url']}")
-                
+
                 # Check if this looks like we've hit the end or are getting repeats
                 if not page_results:
                     print("No new unique results on this page, stopping")
                     break
-                    
+
                 # Look for "Next" link to see if more pages are available
                 next_link = soup.select_one('a.sb_pagN')
                 if not next_link and page > 0:
                     print("No 'Next' button found, reached end of results")
                     break
-                    
+
             except requests.RequestException as e:
                 print(f"Request failed on page {page + 1}: {e}")
                 break
@@ -170,7 +216,7 @@ class ImprovedBingScraper:
                 import traceback
                 traceback.print_exc()
                 break
-        
+
         return self.results
     
     def extract_result(self, item, page_num):
