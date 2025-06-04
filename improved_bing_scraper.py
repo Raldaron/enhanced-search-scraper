@@ -7,7 +7,8 @@ import os
 import time
 import random
 import requests
-from urllib.parse import quote_plus, urlparse
+import base64
+from urllib.parse import quote_plus, urlparse, parse_qs
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -117,30 +118,58 @@ class ImprovedBingScraper:
         return self.results
     
     def extract_result(self, item, page_num):
-        """Extract result information from a search result item"""
+        """Extract result information from a search result item.
+
+        Tries multiple selectors for robustness across Bing layouts.
+        """
         try:
-            # Get the main link
-            link_element = item.select_one('h2 a')
-            if not link_element:
+            url_selectors = ['h2 a[href]', 'h3 a[href]', 'a[href]']
+            link_element = None
+            url = ''
+            for sel in url_selectors:
+                link_element = item.select_one(sel)
+                if link_element and link_element.get('href'):
+                    url = link_element.get('href', '').strip()
+                    if url:
+                        break
+
+            if not url:
                 return None
-            
-            url = link_element.get('href', '')
-            title = link_element.get_text(strip=True)
-            
-            # Clean up Bing redirect URLs
+
+            title = link_element.get_text(strip=True) if link_element else ''
+
+            # Resolve relative URLs
             if url.startswith('/'):
                 url = 'https://www.bing.com' + url
-            
-            # Get description
-            desc_element = item.select_one('p')
-            description = desc_element.get_text(strip=True) if desc_element else ''
-            
-            # Extract domain
+
+            # Handle click tracking links with base64 encoded URLs
+            try:
+                parsed = urlparse(url)
+                if parsed.netloc == 'www.bing.com' and parsed.path.startswith('/ck'):
+                    params = parse_qs(parsed.query)
+                    enc = params.get('u', [''])[0]
+                    if enc:
+                        if enc.startswith('a1'):
+                            enc = enc[2:]
+                        enc += '=' * (-len(enc) % 4)
+                        decoded = base64.b64decode(enc).decode('utf-8')
+                        url = decoded
+            except Exception as decode_err:
+                print(f"Error decoding tracking url: {decode_err}")
+
+            description = ''
+            desc_selectors = ['.b_caption p', '.b_snippetBigText', '.b_algoSlug', 'p']
+            for sel in desc_selectors:
+                desc_element = item.select_one(sel)
+                if desc_element and desc_element.get_text(strip=True):
+                    description = desc_element.get_text(strip=True)
+                    break
+
             try:
                 domain = urlparse(url).netloc
-            except:
+            except Exception:
                 domain = ''
-            
+
             return {
                 'url': url,
                 'title': title,
@@ -148,7 +177,7 @@ class ImprovedBingScraper:
                 'domain': domain,
                 'page': page_num
             }
-            
+
         except Exception as e:
             print(f"Error extracting result: {e}")
             return None
