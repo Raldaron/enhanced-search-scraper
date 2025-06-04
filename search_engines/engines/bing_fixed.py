@@ -15,11 +15,12 @@ class Bing(SearchEngine):
     def _selectors(self, element):
         '''Returns the appropriate CSS selector.'''
         selectors = {
-            'url': 'h2 a', 
-            'title': 'h2', 
-            'text': 'p', 
-            'links': 'ol#b_results > li.b_algo', 
-            'next': 'div#b_content nav[role="navigation"] a.sb_pagN'
+            # Multiple fallbacks for robustness against Bing layout changes
+            'links': 'li.b_algo, .b_algo, li.algo, .algo',
+            'url': 'h2 a[href], h3 a[href], a[href]',
+            'title': 'h2 a, h3 a, .b_title a',
+            'text': '.b_caption p, .b_snippetBigText, .b_algoSlug, p',
+            'next': 'a.sb_pagN, .sb_pagN, a[aria-label="Next page"]'
         }
         return selectors[element]
     
