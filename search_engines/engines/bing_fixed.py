@@ -15,11 +15,12 @@ class Bing(SearchEngine):
     def _selectors(self, element):
         '''Returns the appropriate CSS selector.'''
         selectors = {
-            'url': 'h2 a', 
-            'title': 'h2', 
-            'text': 'p', 
-            'links': 'ol#b_results > li.b_algo', 
-            'next': 'div#b_content nav[role="navigation"] a.sb_pagN'
+            # Multiple fallbacks for robustness against Bing layout changes
+            'links': 'li.b_algo, .b_algo, li.algo, .algo',
+            'url': 'h2 a[href], h3 a[href], a[href]',
+            'title': 'h2 a, h3 a, .b_title a',
+            'text': '.b_caption p, .b_snippetBigText, .b_algoSlug, p',
+            'next': 'a.sb_pagN, .sb_pagN, a[aria-label="Next page"]'
         }
         return selectors[element]
     
@@ -39,33 +40,39 @@ class Bing(SearchEngine):
         return {'url':url, 'data':None}
 
     def _get_url(self, tag, item='href'):
-        '''Returns the URL of search results items.'''
-        url = super(Bing, self)._get_url(tag, 'href')
-        resp = url  # Default fallback to original URL
+        """Return the clean URL of a Bing search result item."""
+
+        raw_url = super(Bing, self)._get_url(tag, 'href')
+        url = raw_url
 
         try:
-            parsed_url = urlparse(url)
-            query_params = parse_qs(parsed_url.query)
-            
-            # Check if 'u' parameter exists in the query
-            if "u" in query_params and len(query_params["u"]) > 0:
-                encoded_url = query_params["u"][0]
-                
-                # Remove 'a1' prefix if present
+            if url.startswith('/'):
+                url = self._base_url + url
+
+            parsed = urlparse(url)
+            if parsed.netloc.endswith('bing.com') and parsed.path.startswith('/ck'):
+                params = parse_qs(parsed.query)
+                encoded = params.get('u') or params.get('r')
+                if encoded:
+                    url = encoded[0]
+
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query)
+
+            if 'u' in params and params['u']:
+                encoded_url = params['u'][0]
+
                 if encoded_url.startswith('a1'):
                     encoded_url = encoded_url[2:]
-                
-                # fix base64 padding
-                encoded_url += (len(encoded_url) % 4) * "="
 
-                decoded_bytes = base64.b64decode(encoded_url)
-                resp = decoded_bytes.decode('utf-8')
-            else:
-                # If no 'u' parameter, the URL might be direct
-                resp = url
-                
-        except Exception as e:
-            print(f"Error decoding Base64 string: {e}, falling back to original URL")
-            resp = url  # Fallback to original URL
+                missing = len(encoded_url) % 4
+                if missing:
+                    encoded_url += '=' * (4 - missing)
 
-        return resp
+                url = base64.b64decode(encoded_url).decode('utf-8')
+
+        except Exception as exc:
+            print(f"Error decoding Bing URL '{raw_url}': {exc}")
+            url = raw_url
+
+        return url

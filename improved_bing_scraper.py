@@ -7,7 +7,8 @@ import os
 import time
 import random
 import requests
-from urllib.parse import quote_plus, urlparse
+import base64
+from urllib.parse import quote_plus, urlparse, parse_qs
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -17,31 +18,73 @@ class ImprovedBingScraper:
         self.results = []
         self.unique_urls = set()
 
-        # pool of user agents to rotate between retries
+        # List of realistic desktop user agents for Chrome, Firefox, Safari, and Edge
         self.user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            # Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36 Edg/122.0",
+            # macOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7; rv:122.0) Gecko/20100101 Firefox/122.0",
+            # Linux
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0"
         ]
 
-        # Enhanced headers to better mimic a real browser
-        self.headers = {
-            'User-Agent': random.choice(self.user_agents),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"'
+        # Initialize with a random header set
+        self.update_headers()
+
+    def update_headers(self):
+        """Rotate User-Agent and other headers to avoid detection."""
+        ua = random.choice(self.user_agents)
+
+        # Determine Accept header based on browser
+        if "Firefox" in ua:
+            accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        elif "Safari" in ua and "Chrome" not in ua:
+            accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        else:
+            accept = (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,image/apng,*/*;q=0.8,"
+                "application/signed-exchange;v=b3;q=0.7"
+            )
+
+        accept_languages = [
+            "en-US,en;q=0.9",
+            "en-GB,en;q=0.8",
+            "en-US,en;q=0.8,en-GB;q=0.7",
+            "en-US;q=0.7,en;q=0.3",
+        ]
+
+        headers = {
+            "User-Agent": ua,
+            "Accept": accept,
+            "Accept-Language": random.choice(accept_languages),
+            "Connection": "keep-alive",
+            "DNT": "1",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
         }
-        self.session.headers.update(self.headers)
+
+        if "Chrome" in ua or "Edg" in ua:
+            platform = (
+                '"Windows"' if "Windows" in ua else '"macOS"' if "Macintosh" in ua else '"Linux"'
+            )
+            if "Edg" in ua:
+                headers["sec-ch-ua"] = '"Not.A/Brand";v="8", "Chromium";v="122", "Microsoft Edge";v="122"'
+            else:
+                headers["sec-ch-ua"] = '"Not_A Brand";v="8", "Chromium";v="122", "Google Chrome";v="122"'
+            headers["sec-ch-ua-mobile"] = "?0"
+            headers["sec-ch-ua-platform"] = platform
+
+        self.session.headers.clear()
+        self.session.headers.update(headers)
 
     def enhanced_request_handler(self, url, max_retries=3, backoff_factor=2):
         """Make HTTP request with retry and backoff logic."""
@@ -50,8 +93,7 @@ class ImprovedBingScraper:
         for attempt in range(1, max_retries + 1):
             try:
                 # rotate user agent to look less like a bot
-                self.session.headers['User-Agent'] = random.choice(self.user_agents)
-
+                self.update_headers()
                 response = self.session.get(url, timeout=30)
 
                 if response.status_code == 429:
@@ -80,7 +122,7 @@ class ImprovedBingScraper:
             except requests.exceptions.ConnectionError as e:
                 print(f"Connection error on attempt {attempt} for {url}: {e}")
                 self.session = requests.Session()
-                self.session.headers.update(self.headers)
+                self.session.headers.update(self.session.headers)
                 time.sleep(wait_time)
                 wait_time *= backoff_factor
             except requests.RequestException as e:
@@ -90,31 +132,35 @@ class ImprovedBingScraper:
 
         print(f"All retries failed for {url}")
         return None
-        
+
+    def get_random_delay(self, min_delay=2, max_delay=5):
+        """Generate random delay between requests with slight variance"""
+        return random.uniform(min_delay, max_delay) + random.random() * 0.5
+
     def search_bing(self, query, max_pages=10, delay_range=(2, 5)):
-        """Search Bing with proper pagination handling"""
+        """Search Bing with proper pagination handling and robust error handling"""
         print(f"Starting Bing search for: '{query}'")
-        
+
         base_url = "https://www.bing.com/search"
         encoded_query = quote_plus(query)
-        
+
         for page in range(max_pages):
             # Calculate the offset for this page (Bing uses 'first' parameter)
             offset = page * 10  # Bing shows 10 results per page by default
-            
+
             # Build URL with proper pagination
             if page == 0:
                 url = f"{base_url}?q={encoded_query}&FORM=QBRE"
             else:
                 url = f"{base_url}?q={encoded_query}&first={offset}&FORM=PERE"
-            
+
             print(f"\nPage {page + 1}: {url}")
-            
+
             try:
                 # Add some randomness to avoid detection
-                time.sleep(random.uniform(*delay_range))
-                
-                # Make request using enhanced handler
+                time.sleep(self.get_random_delay(*delay_range))
+
+                # Make request using enhanced handler (with retries, header rotation, etc.)
                 response = self.enhanced_request_handler(url)
                 if not response:
                     print("Failed to retrieve page after retries")
@@ -122,18 +168,18 @@ class ImprovedBingScraper:
 
                 print(f"Response status: {response.status_code}")
                 print(f"Response size: {len(response.text)} chars")
-                
+
                 # Parse results
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
+
                 # Find search result items
                 result_items = soup.select('li.b_algo')
                 print(f"Found {len(result_items)} result items")
-                
+
                 if not result_items:
                     print("No more results found, ending search")
                     break
-                
+
                 page_results = []
                 for item in result_items:
                     result = self.extract_result(item, page + 1)
@@ -141,27 +187,27 @@ class ImprovedBingScraper:
                         self.unique_urls.add(result['url'])
                         page_results.append(result)
                         self.results.append(result)
-                
+
                 print(f"Extracted {len(page_results)} new unique results")
-                
+
                 # Check if we found any easyapply.co results
                 easyapply_results = [r for r in page_results if 'easyapply.co' in r['url']]
                 if easyapply_results:
                     print(f"Found {len(easyapply_results)} easyapply.co results on this page!")
                     for result in easyapply_results:
                         print(f"  - {result['url']}")
-                
+
                 # Check if this looks like we've hit the end or are getting repeats
                 if not page_results:
                     print("No new unique results on this page, stopping")
                     break
-                    
+
                 # Look for "Next" link to see if more pages are available
                 next_link = soup.select_one('a.sb_pagN')
                 if not next_link and page > 0:
                     print("No 'Next' button found, reached end of results")
                     break
-                    
+
             except requests.RequestException as e:
                 print(f"Request failed on page {page + 1}: {e}")
                 break
@@ -170,34 +216,51 @@ class ImprovedBingScraper:
                 import traceback
                 traceback.print_exc()
                 break
-        
+
         return self.results
     
     def extract_result(self, item, page_num):
-        """Extract result information from a search result item"""
+        """Extract search result data from a BeautifulSoup element with fallbacks."""
         try:
-            # Get the main link
-            link_element = item.select_one('h2 a')
+            link_element = None
+            for selector in ['h2 a[href]', 'h3 a[href]', 'a[href]']:
+                link_element = item.select_one(selector)
+                if link_element and link_element.get('href'):
+                    break
+
             if not link_element:
                 return None
-            
-            url = link_element.get('href', '')
+
+            url = link_element.get('href', '').strip()
             title = link_element.get_text(strip=True)
-            
-            # Clean up Bing redirect URLs
+
             if url.startswith('/'):
                 url = 'https://www.bing.com' + url
-            
-            # Get description
-            desc_element = item.select_one('p')
-            description = desc_element.get_text(strip=True) if desc_element else ''
-            
-            # Extract domain
+
+            try:
+                parsed = urlparse(url)
+                query_params = parse_qs(parsed.query)
+                if 'u' in query_params and query_params['u']:
+                    encoded = query_params['u'][0]
+                    if encoded.startswith('a1'):
+                        encoded = encoded[2:]
+                    encoded += '=' * (len(encoded) % 4)
+                    url = base64.b64decode(encoded).decode('utf-8')
+            except Exception as e:
+                print(f"Error decoding Base64 URL '{url}': {e}")
+
+            description = ''
+            for selector in ['.b_caption p', '.b_snippetBigText', '.b_algoSlug', 'p']:
+                desc_elem = item.select_one(selector)
+                if desc_elem and desc_elem.get_text(strip=True):
+                    description = desc_elem.get_text(strip=True)
+                    break
+
             try:
                 domain = urlparse(url).netloc
-            except:
+            except Exception:
                 domain = ''
-            
+
             return {
                 'url': url,
                 'title': title,
@@ -205,7 +268,7 @@ class ImprovedBingScraper:
                 'domain': domain,
                 'page': page_num
             }
-            
+
         except Exception as e:
             print(f"Error extracting result: {e}")
             return None
