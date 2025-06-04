@@ -13,7 +13,7 @@ except ImportError as e:
     print(f"Error importing search_engines: {e}")
     exit(1)
 
-def test_search_strategy(query, strategy_num, max_pages=5):
+def run_search_strategy(query, strategy_num, max_pages=5):
     """Test a single search strategy"""
     print(f"\n=== Strategy {strategy_num}: Testing '{query}' ===")
     
@@ -106,7 +106,7 @@ def main():
     csv_files = []
     
     for strategy_num, query in failed_strategies:
-        found, csv_file = test_search_strategy(query, strategy_num, max_pages=10)
+        found, csv_file = run_search_strategy(query, strategy_num, max_pages=10)
         total_found += found
         if found > 0:
             csv_files.append(csv_file)
