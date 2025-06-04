@@ -174,40 +174,60 @@ class ImprovedBingScraper:
         return self.results
     
     def extract_result(self, item, page_num):
-        """Extract search result data from a BeautifulSoup element with fallbacks."""
-        try:
-            link_element = None
-            for selector in ['h2 a[href]', 'h3 a[href]', 'a[href]']:
-                link_element = item.select_one(selector)
-                if link_element and link_element.get('href'):
-                    break
+        """Extract result information from a search result item.
 
-            if not link_element:
+        Tries multiple selectors for robustness across Bing layouts.
+        """
+        try:
+            url_selectors = ['h2 a[href]', 'h3 a[href]', 'a[href]']
+            link_element = None
+            url = ''
+            for sel in url_selectors:
+                link_element = item.select_one(sel)
+                if link_element and link_element.get('href'):
+                    url = link_element.get('href', '').strip()
+                    if url:
+                        break
+
+            if not url:
                 return None
 
-            url = link_element.get('href', '').strip()
-            title = link_element.get_text(strip=True)
+            title = link_element.get_text(strip=True) if link_element else ''
 
+            # Resolve relative URLs
             if url.startswith('/'):
                 url = 'https://www.bing.com' + url
 
+            # Handle click tracking links with base64 encoded URLs
             try:
                 parsed = urlparse(url)
-                query_params = parse_qs(parsed.query)
-                if 'u' in query_params and query_params['u']:
-                    encoded = query_params['u'][0]
-                    if encoded.startswith('a1'):
-                        encoded = encoded[2:]
-                    encoded += '=' * (len(encoded) % 4)
-                    url = base64.b64decode(encoded).decode('utf-8')
-            except Exception as e:
-                print(f"Error decoding Base64 URL '{url}': {e}")
+                if parsed.netloc == 'www.bing.com' and parsed.path.startswith('/ck'):
+                    params = parse_qs(parsed.query)
+                    enc = params.get('u', [''])[0]
+                    if enc:
+                        if enc.startswith('a1'):
+                            enc = enc[2:]
+                        enc += '=' * (-len(enc) % 4)
+                        decoded = base64.b64decode(enc).decode('utf-8')
+                        url = decoded
+                else:
+                    # Also handle other Bing-encoded URLs
+                    query_params = parse_qs(parsed.query)
+                    if 'u' in query_params and query_params['u']:
+                        encoded = query_params['u'][0]
+                        if encoded.startswith('a1'):
+                            encoded = encoded[2:]
+                        encoded += '=' * (len(encoded) % 4)
+                        url = base64.b64decode(encoded).decode('utf-8')
+            except Exception as decode_err:
+                print(f"Error decoding tracking url: {decode_err}")
 
             description = ''
-            for selector in ['.b_caption p', '.b_snippetBigText', '.b_algoSlug', 'p']:
-                desc_elem = item.select_one(selector)
-                if desc_elem and desc_elem.get_text(strip=True):
-                    description = desc_elem.get_text(strip=True)
+            desc_selectors = ['.b_caption p', '.b_snippetBigText', '.b_algoSlug', 'p']
+            for sel in desc_selectors:
+                desc_element = item.select_one(sel)
+                if desc_element and desc_element.get_text(strip=True):
+                    description = desc_element.get_text(strip=True)
                     break
 
             try:
