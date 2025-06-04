@@ -7,7 +7,8 @@ import os
 import time
 import random
 import requests
-from urllib.parse import quote_plus, urlparse
+import base64
+from urllib.parse import quote_plus, urlparse, parse_qs
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -173,30 +174,47 @@ class ImprovedBingScraper:
         return self.results
     
     def extract_result(self, item, page_num):
-        """Extract result information from a search result item"""
+        """Extract search result data from a BeautifulSoup element with fallbacks."""
         try:
-            # Get the main link
-            link_element = item.select_one('h2 a')
+            link_element = None
+            for selector in ['h2 a[href]', 'h3 a[href]', 'a[href]']:
+                link_element = item.select_one(selector)
+                if link_element and link_element.get('href'):
+                    break
+
             if not link_element:
                 return None
-            
-            url = link_element.get('href', '')
+
+            url = link_element.get('href', '').strip()
             title = link_element.get_text(strip=True)
-            
-            # Clean up Bing redirect URLs
+
             if url.startswith('/'):
                 url = 'https://www.bing.com' + url
-            
-            # Get description
-            desc_element = item.select_one('p')
-            description = desc_element.get_text(strip=True) if desc_element else ''
-            
-            # Extract domain
+
+            try:
+                parsed = urlparse(url)
+                query_params = parse_qs(parsed.query)
+                if 'u' in query_params and query_params['u']:
+                    encoded = query_params['u'][0]
+                    if encoded.startswith('a1'):
+                        encoded = encoded[2:]
+                    encoded += '=' * (len(encoded) % 4)
+                    url = base64.b64decode(encoded).decode('utf-8')
+            except Exception as e:
+                print(f"Error decoding Base64 URL '{url}': {e}")
+
+            description = ''
+            for selector in ['.b_caption p', '.b_snippetBigText', '.b_algoSlug', 'p']:
+                desc_elem = item.select_one(selector)
+                if desc_elem and desc_elem.get_text(strip=True):
+                    description = desc_elem.get_text(strip=True)
+                    break
+
             try:
                 domain = urlparse(url).netloc
-            except:
+            except Exception:
                 domain = ''
-            
+
             return {
                 'url': url,
                 'title': title,
@@ -204,7 +222,7 @@ class ImprovedBingScraper:
                 'domain': domain,
                 'page': page_num
             }
-            
+
         except Exception as e:
             print(f"Error extracting result: {e}")
             return None
