@@ -16,10 +16,17 @@ class ImprovedBingScraper:
         self.session = requests.Session()
         self.results = []
         self.unique_urls = set()
-        
+
+        # pool of user agents to rotate between retries
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        ]
+
         # Enhanced headers to better mimic a real browser
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': random.choice(self.user_agents),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
@@ -35,6 +42,54 @@ class ImprovedBingScraper:
             'sec-ch-ua-platform': '"Windows"'
         }
         self.session.headers.update(self.headers)
+
+    def enhanced_request_handler(self, url, max_retries=3, backoff_factor=2):
+        """Make HTTP request with retry and backoff logic."""
+        wait_time = backoff_factor
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                # rotate user agent to look less like a bot
+                self.session.headers['User-Agent'] = random.choice(self.user_agents)
+
+                response = self.session.get(url, timeout=30)
+
+                if response.status_code == 429:
+                    print(f"Rate limited (429) when fetching {url} - retry {attempt}/{max_retries} after {wait_time}s")
+                    time.sleep(wait_time)
+                    wait_time *= backoff_factor
+                    continue
+
+                if 500 <= response.status_code < 600:
+                    print(f"Server error {response.status_code} for {url} - retry {attempt}/{max_retries} after {wait_time}s")
+                    time.sleep(wait_time)
+                    wait_time *= backoff_factor
+                    continue
+
+                if 'captcha' in response.text.lower():
+                    print("CAPTCHA detected. Stopping requests.")
+                    return None
+
+                response.raise_for_status()
+                return response
+
+            except requests.exceptions.Timeout:
+                print(f"Timeout on attempt {attempt} for {url} - retrying in {wait_time}s")
+                time.sleep(wait_time)
+                wait_time *= backoff_factor
+            except requests.exceptions.ConnectionError as e:
+                print(f"Connection error on attempt {attempt} for {url}: {e}")
+                self.session = requests.Session()
+                self.session.headers.update(self.headers)
+                time.sleep(wait_time)
+                wait_time *= backoff_factor
+            except requests.RequestException as e:
+                print(f"Request exception on attempt {attempt} for {url}: {e}")
+                time.sleep(wait_time)
+                wait_time *= backoff_factor
+
+        print(f"All retries failed for {url}")
+        return None
         
     def search_bing(self, query, max_pages=10, delay_range=(2, 5)):
         """Search Bing with proper pagination handling"""
@@ -59,10 +114,12 @@ class ImprovedBingScraper:
                 # Add some randomness to avoid detection
                 time.sleep(random.uniform(*delay_range))
                 
-                # Make request
-                response = self.session.get(url, timeout=30)
-                response.raise_for_status()
-                
+                # Make request using enhanced handler
+                response = self.enhanced_request_handler(url)
+                if not response:
+                    print("Failed to retrieve page after retries")
+                    break
+
                 print(f"Response status: {response.status_code}")
                 print(f"Response size: {len(response.text)} chars")
                 
