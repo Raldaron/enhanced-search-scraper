@@ -16,25 +16,78 @@ class ImprovedBingScraper:
         self.session = requests.Session()
         self.results = []
         self.unique_urls = set()
-        
-        # Enhanced headers to better mimic a real browser
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"'
+
+        # List of realistic desktop user agents for Chrome, Firefox, Safari, and Edge
+        self.user_agents = [
+            # Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36 Edg/122.0",
+            # macOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7; rv:122.0) Gecko/20100101 Firefox/122.0",
+            # Linux
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0"
+        ]
+
+        # Initialize with a random header set
+        self.update_headers()
+
+    def update_headers(self):
+        """Rotate User-Agent and other headers to avoid detection."""
+        ua = random.choice(self.user_agents)
+
+        # Determine Accept header based on browser
+        if "Firefox" in ua:
+            accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        elif "Safari" in ua and "Chrome" not in ua:
+            accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        else:
+            accept = (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,image/apng,*/*;q=0.8,"
+                "application/signed-exchange;v=b3;q=0.7"
+            )
+
+        accept_languages = [
+            "en-US,en;q=0.9",
+            "en-GB,en;q=0.8",
+            "en-US,en;q=0.8,en-GB;q=0.7",
+            "en-US;q=0.7,en;q=0.3",
+        ]
+
+        headers = {
+            "User-Agent": ua,
+            "Accept": accept,
+            "Accept-Language": random.choice(accept_languages),
+            "Connection": "keep-alive",
+            "DNT": "1",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
         }
-        self.session.headers.update(self.headers)
+
+        if "Chrome" in ua or "Edg" in ua:
+            platform = (
+                '"Windows"' if "Windows" in ua else '"macOS"' if "Macintosh" in ua else '"Linux"'
+            )
+            if "Edg" in ua:
+                headers["sec-ch-ua"] = '"Not.A/Brand";v="8", "Chromium";v="122", "Microsoft Edge";v="122"'
+            else:
+                headers["sec-ch-ua"] = '"Not_A Brand";v="8", "Chromium";v="122", "Google Chrome";v="122"'
+            headers["sec-ch-ua-mobile"] = "?0"
+            headers["sec-ch-ua-platform"] = platform
+
+        self.session.headers.clear()
+        self.session.headers.update(headers)
+
+    def get_random_delay(self, min_delay=2, max_delay=5):
+        """Generate random delay between requests with slight variance"""
+        return random.uniform(min_delay, max_delay) + random.random() * 0.5
         
     def search_bing(self, query, max_pages=10, delay_range=(2, 5)):
         """Search Bing with proper pagination handling"""
@@ -57,8 +110,11 @@ class ImprovedBingScraper:
             
             try:
                 # Add some randomness to avoid detection
-                time.sleep(random.uniform(*delay_range))
-                
+                time.sleep(self.get_random_delay(*delay_range))
+
+                # Rotate headers for each request
+                self.update_headers()
+
                 # Make request
                 response = self.session.get(url, timeout=30)
                 response.raise_for_status()
